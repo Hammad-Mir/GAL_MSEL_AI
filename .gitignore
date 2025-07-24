@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.env
+
+# folders
+data/
+dummy_data/
+neo4j/
+docs/
+
+# other files
+app.py
+asset.entity.ts
+organisation.entity.ts
+team.entity.ts
+unit.entity.ts
+test.ipynb
