@@ -1,15 +1,24 @@
 services:
-  neo4j:
-    image: neo4j:latest
-    container_name: local_neo4j
+  msel-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "8000:8000"
     environment:
-      NEO4J_AUTH: "neo4j/password"
-      NEO4J_apoc_export_file_enabled: "true"
-      NEO4J_apoc_import_file_enabled: "true"
-      NEO4J_apoc_import_file_use_neo4j_config: "true"
-      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      - PYTHONUNBUFFERED=1
+      # Add any environment variables your FastAPI app needs
+      # - DATABASE_URL=postgresql://user:pass@host:port/db
+      # - REDIS_URL=redis://localhost:6379
     volumes:
-      - ./data:/data
+      # Mount your FastAPI app code (for development)
+      - .:/app
+    restart: unless-stopped
+    # Optional: if you need to connect to the main server's database
+    # networks:
+    #   - shared-network
+
+# Optional: Create a shared network if you want direct container-to-container communication
+# networks:
+#   shared-network:
+#     external: true
