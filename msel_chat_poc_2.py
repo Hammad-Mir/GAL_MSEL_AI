@@ -265,7 +265,7 @@ async def start_session(unit_id: StartSession):
     return {
         "session_id": session_id,
         # "user_message": user_msg,
-        "initial_agent_message": response,
+        "response": response,
     }
 
 @app.post("/chat")
@@ -284,7 +284,9 @@ def chat(req: ChatRequest):
     if req.input.lower() == "ok" and confirmed_summaries.get(req.session_id) is not None:
         return{
             "session_id": req.session_id,
-            "msel": generate_msel(req.session_id)
+            "response": {
+                "message": "Msel generated sucessfully.",
+                "msel":generate_msel(req.session_id)}
         }
     else:
         return {
