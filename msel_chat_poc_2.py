@@ -14,8 +14,8 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 
 load_dotenv()
-UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
-# UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
+# UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
+UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
 print(UNIT_API_BASE)
 app = FastAPI()
 
