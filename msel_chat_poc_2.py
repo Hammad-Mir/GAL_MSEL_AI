@@ -264,7 +264,7 @@ async def start_session(unit_id: StartSession):
     # The LLM's reply is now your true "initial_agent_message"
     return {
         "session_id": session_id,
-        "user_message": user_msg,
+        # "user_message": user_msg,
         "initial_agent_message": response,
     }
 
@@ -281,18 +281,25 @@ def chat(req: ChatRequest):
         summary = extract_summary(response)
         if summary:
             confirmed_summaries[req.session_id] = summary
-    return {
+    if req.input.lower() == "ok" and confirmed_summaries.get(req.session_id) is not None:
+        return{
+            "session_id": req.session_id,
+            "msel": generate_msel(req.session_id)
+        }
+    else:
+        return {
+        "session_id": req.session_id,
         "response": response,
-        "awaiting_confirmation": awaiting_confirmation,
-        "summary": summary,
-    }
+        # "awaiting_confirmation": awaiting_confirmation,
+        # "summary": summary,
+        }
 
-@app.get("/generate-msel/{session_id}")
+# @app.get("/generate-msel/{session_id}")
 def generate_msel(session_id: str):
     summary = confirmed_summaries.get(session_id)
     if not summary or not summary.strip():
         return {"error": "No confirmed summary found for this session. Complete and confirm the scenario first."}
     msel = msel_chain.invoke({"collected_data": summary})
-    return {"msel": msel}
+    return msel
 
 # To run: uvicorn msel:app --reload
