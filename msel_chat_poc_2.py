@@ -14,8 +14,8 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 
 load_dotenv()
-# UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
-UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
+UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
+# UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
 print(UNIT_API_BASE)
 app = FastAPI()
 
@@ -143,19 +143,82 @@ class ChatRequest(BaseModel):
 class GenerateMSELRequest(BaseModel):
     session_id: str
 
-def format_unit_info(unit_data):
-    # Extract info from nested dict into friendly natural text for the bot
-    org = unit_data.get("asset", {}).get("organisation", {})
-    asset = unit_data.get("asset", {})
-    unit = unit_data
-    msg = (
-        f"My organisation is '{org.get('name', 'Unknown')}' ({org.get('description', '...')}). "
-        f"Our HQ is at {org.get('hqLocation', 'Unknown')} in {org.get('country', 'Unknown')}. "
-        f"The asset in question is '{asset.get('name', 'Unknown')}', a {asset.get('type', 'Unknown')} asset located in {asset.get('country', 'Unknown')}. "
-        f"The asset coordinates are {asset.get('coordinates', 'Unknown')}. "
-        f"My unit of interest is '{unit.get('name', 'Unknown')}' (type: {unit.get('type', 'Unknown')})."
-        "\nLet's begin scenario setup."
+# def format_unit_info(unit_data):
+#     # Extract info from nested dict into friendly natural text for the bot
+#     org = unit_data.get("asset", {}).get("organisation", {})
+#     asset = unit_data.get("asset", {})
+#     unit = unit_data
+#     msg = (
+#         f"Organisation: '{org.get('name', 'Unknown')}' ({org.get('description', '...')}). "
+#         f"HQ Location: {org.get('hqLocation', 'Unknown')} in {org.get('country', 'Unknown')}. "
+#         f"Asset: '{asset.get('name', 'Unknown')}', a {asset.get('type', 'Unknown')} asset located in {asset.get('country', 'Unknown')}. "
+#         f"Asset Coordinates: {asset.get('coordinates', 'Unknown')}. "
+#         f"Unit of Interest: '{unit.get('name', 'Unknown')}' (type: {unit.get('type', 'Unknown')})."
+#         "\nLet's begin scenario setup."
+#     )
+#     return msg
+
+def format_unit_info(unit_data: dict) -> str:
+    """
+    Turn the unit ingest structure into a compact, human-readable summary.
+
+    Expected structure (truncated):
+    {
+        "unitInfo": {...},
+        "teamsAssigned": [...]
+    }
+    """
+
+    # ---------- 1) Core sections ----------
+    unit   = unit_data.get("unitInfo", {})
+    asset  = unit.get("asset", {})
+    org    = asset.get("organisation", {})
+    teams  = unit_data.get("teamsAssigned", [])
+
+    # ---------- 2) Organisation ----------
+    org_text = (
+        f"Organisation/Owner: "
+        f"'{org.get('name', 'Unknown')}' – "
+        f"{org.get('description', 'No description')}. "
+        f"HQ: {org.get('hqLocation', 'Unknown location')}, "
+        f"{org.get('country', 'Unknown country')}."
     )
+
+    # ---------- 3) Asset ----------
+    asset_text = (
+        f"Asset: "
+        f"'{asset.get('name', 'Unknown')}', a "
+        f"{asset.get('type', 'Unknown type')} asset in "
+        f"{asset.get('country', 'Unknown country')} "
+        f"(coords: {asset.get('coordinates', 'Unknown')})."
+    )
+
+    # ---------- 4) Unit ----------
+    unit_text = (
+        f"Unit: "
+        f"'{unit.get('name', 'Unknown')}'. "
+        f"Key Processes {unit.get('type', 'Unknown')}."
+    )
+
+    # ---------- 5) Teams / users ----------
+    if teams:
+        team_lines = []
+        for t in teams:
+            users = t.get("users", [])
+            user_list = []
+            for u in users:
+                full_name = f"{u.get('firstName','')} {u.get('lastName','')}".strip()
+                role      = u.get("roleName") or u.get("roleId") or ""
+                user_list.append(f"{full_name}{f' [{role}]' if role else ''}")
+            members = ", ".join(user_list) if user_list else "No users"
+            team_lines.append(f"• Team: '{t.get('name','Unnamed')}' \n{members}")
+        teams_text = "Teams Assigned for Training:\n" + "\n".join(team_lines)
+    else:
+        teams_text = "No teams have been assigned."
+
+    # ---------- 6) Build final message ----------
+    msg = "\n".join([org_text, asset_text, unit_text, teams_text, "Let's begin scenario setup."])
+
     return msg
 
 @app.post("/start-session")
