@@ -14,8 +14,8 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 
 load_dotenv()
-UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
-# UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
+# UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
+UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
 print(UNIT_API_BASE)
 app = FastAPI()
 
@@ -285,9 +285,10 @@ def chat(req: ChatRequest):
     if req.input.lower() == "ok" and confirmed_summaries.get(req.session_id) is not None:
         return{
             "session_id": req.session_id,
-            "response": {
-                "message": "Msel generated sucessfully.",
-                "msel":generate_msel(req.session_id)}
+            # "response": {
+            #     "message": "Msel generated sucessfully.",
+            #     "msel":generate_msel(req.session_id)}
+            "response": generate_msel(req.session_id),
         }
     else:
         return {
