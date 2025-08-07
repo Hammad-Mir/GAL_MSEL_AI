@@ -13,4 +13,5 @@ COPY . .
 EXPOSE 8000
 
 # Run the FastAPI application
-CMD ["fastapi", "run", "./msel_chat_poc_2.py"]
+# CMD ["fastapi", "run", "./msel_chat_langchain.py"]
+CMD ["fastapi", "run", "./msel_chat_langgraph.py"]
