@@ -1,25 +1,21 @@
+import re
 import json
 import logging
-import re
-import asyncio, os, uuid
-import datetime, asyncpg
+import os, uuid
+import requests
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import redis.asyncio as aioredis
-from dataclasses_json import config
-from matplotlib import pyplot as plt
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
-from langchain_core.runnables.graph import Graph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph import StateGraph, MessagesState, START
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
-import requests
 
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -29,7 +25,7 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 load_dotenv()                                 # read .env if present
 # UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
 UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 PG_DSN = os.getenv("PG_DSN",    "postgresql://postgres:mypassword@localhost:5432/mydb")
 CACHE_TTL_SECONDS = 60 * 60 * 24   # 24h TTL by default
 ROLL_AFTER  = 50               # summarise every 50 human+AI pairs
@@ -168,7 +164,10 @@ def rkey(sid: str) -> str:
 #     await redis.ltrim(rkey(sid), keep_last, -1)
 
 async def rpush(redis, sid, msg):
-    await redis.rpush(rkey(sid), json.dumps(msg.model_dump()), expire=CACHE_TTL_SECONDS)
+    # Push message to Redis list
+    await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
+    # Set/update TTL for the session key
+    await redis.expire(rkey(sid), CACHE_TTL_SECONDS)
 
 async def rlen(redis, sid):
     return await redis.llen(rkey(sid))
