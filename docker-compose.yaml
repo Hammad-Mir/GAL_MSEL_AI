@@ -7,15 +7,12 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      # Add any environment variables your FastAPI app needs
-      # - DATABASE_URL=postgresql://user:pass@host:port/db
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://redis:6379  # internal access
     volumes:
-      # Mount your FastAPI app code (for development)
       - .:/app
     restart: unless-stopped
     depends_on:
-      - redis  # Ensure Redis starts before FastAPI
+      - redis
     networks:
       - app_network
 
@@ -23,7 +20,7 @@ services:
     image: redis:latest
     container_name: redis
     ports:
-      - "6377:6377"
+      - "6377:6379"  # host:container => access Redis on localhost:6377
     restart: unless-stopped
     networks:
       - app_network

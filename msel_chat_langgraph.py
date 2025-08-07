@@ -337,7 +337,7 @@ async def start_session(body: StartSession):
 
     # feed first turn
     first_user_msg = format_unit_info(unit_json)
-    print(f"Session {sid} started with unit {body.unit_id}: \n{first_user_msg}")
+    # print(f"Session {sid} started with unit {body.unit_id}: \n{first_user_msg}")
     human = HumanMessage(content=first_user_msg)
     await rpush(redis, sid, SYS)
     await rpush(redis, sid, human)
