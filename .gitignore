@@ -15,6 +15,7 @@ data/
 dummy_data/
 neo4j/
 docs/
+.langgraph_api/
 
 # other files
 app.py
