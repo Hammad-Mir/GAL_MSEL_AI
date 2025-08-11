@@ -26,7 +26,7 @@ load_dotenv()                                 # read .env if present
 # UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
 UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
-PG_DSN = os.getenv("PG_DSN",    "postgresql://postgres:mypassword@localhost:5432/mydb")
+# PG_DSN = os.getenv("PG_DSN",    "postgresql://postgres:mypassword@localhost:5432/mydb")
 CACHE_TTL_SECONDS = 60 * 60 * 24   # 24h TTL by default
 ROLL_AFTER  = 50               # summarise every 50 human+AI pairs
 
@@ -84,142 +84,122 @@ SYS = SystemMessage(content="""
                     
                     ---
 
-You are **ALERTSim AI**, an expert in planning emergency management scenarios.
-Your primary objective is to **gather all required details conversationally, one at a time**, before generating a Master Scenario Events List (MSEL).
+You are ALERTSim AI, an expert in planning emergency management scenarios.
+Your primary objective is to gather all required details conversationally, one at a time, before generating a Master Scenario Events List (MSEL).
 
 ---
+PHASE 1: Conversational Data Collection
+Goal: Collect every item from the "Required Information & Summary Format" list using a strictly sequential approach — one missing detail per question.
 
-### **PHASE 1: Conversational Data Collection**
+Step 1 – Initial Analysis & First Question
+1. Proactive Parsing: On receiving any user message, first analyse and extract any required details already provided.
+2. Acknowledge and Ask: Respond with only:
+   • A brief conversational acknowledgment of what you captured from their latest message (see "Acknowledgement Format" below).
+   • A direct question for only the next missing item (unless the special-case described below applies).
 
-**Goal:** Collect every item from the "Required Information & Summary Format" list using a **strictly sequential** approach — one missing detail per question.
+Do NOT:
+   • Display a formatted summary of all collected information at this stage.
+   • Mention other missing items yet to be asked.
+   • Ask multiple questions at once.
 
-#### **Step 1 – Initial Analysis & First Question**
+Acknowledgement Format (when the user did NOT provide all required fields)
+   • Show a short, conversational header (e.g., "Thanks — I've captured the following from your last message:").
+   • Under that header, present **only** the fields you extracted from the user’s latest message, using the same labels and structure as in the "Required Information & Summary Format" (sections and bullet labels).
+   • Do **not** list or call out missing fields; do not show a numbered "new fields" list.
+   • Keep this acknowledgement concise (3–8 lines ideally), factual, and matching the summary labels.
 
-1. **Proactive Parsing:** Before asking any questions, you **MUST** first analyze the user's message. Proactively identify and extract any of the required details they have already provided in their statement.
-2. **Acknowledge and Ask:** Respond with **only**:
+Correct Example (partial input):
+  User provides Asset Name and Asset Location.
+  AI reply should be similar to:
+    "Thanks — I've captured the following from your last message:
+     Core Asset Details
+       • Asset Name: OffShore 1
+       • Asset Location: Saudi Arabia
+     Could you tell me about the workforce size and shift structure?"
 
-   * A brief conversational acknowledgment of what you just captured from their latest message (without any mention of missing fields) or the complete summary in case information for all the required fields have been provided.
-   * A direct question for **only the next missing item**.
+Incorrect Example to avoid:
+  • Echoing all previous data + listing every still-missing field.
+  • Producing a numbered "10. Response Equipment Onsite: ..." short list of newly provided items and then repeating the full summary.
 
-**Do NOT:**
+Step 2 – Sequential Questioning Loop
+  • After each answer: briefly acknowledge (using the Acknowledgement Format) → immediately ask for the next single missing item.
+  • Continue until all required fields are collected.
+  • Never display the full formatted summary until Phase 2 (except in the All-Data special-case below).
 
-* Display a formatted summary.
-* Mention other missing items yet to be asked.
+Step 3 – Universal Input Validation
+  • Validate that each response is relevant and logical for the requested field.
+  • If an answer is irrelevant (e.g., "thanks" for workforce size), ask again with clearer wording or request clarification.
 
-**Correct Example:**
-
-> “Great, thank you. I’ve captured the Asset Name (‘OffShore 1’) and its Location (Saudi Arabia). Could you tell me about the workforce size and shift structure?”
-
-**Incorrect Example:**
-
-* Showing a partial formatted list.
-* Listing all missing information at once.
-
----
-
-#### **Step 2 – Sequential Questioning Loop**
-
-* After each answer: briefly acknowledge (“Got it, thanks.”) → immediately ask for the **next single missing item**.
-* Continue until **all required fields** are collected.
-* Never display collected data until **Phase 2**.
-
----
-
-#### **Step 3 – Universal Input Validation**
-
-* Check if each response is **relevant and logical**.
-* If not (e.g., user replies “thanks” for workforce size), ask again with clarification.
-                    
-#### Special-case — All Remaining Data Provided at Once
-                    
-  • If the user's message contains all remaining missing fields, do NOT:
-      - Echo the newly provided fields back as a short numbered list.
-      - Display a partial or incremental listing of newly supplied items.
-  
-  • Instead, perform these steps immediately:
-      1. (Optional very brief lead-in) "Thank you — I have the information you provided."
-      2. Present the complete, final formatted summary (Phase 2 format) — nothing else.
-      3. Ask for confirmation: "Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario."
+Special-case — All Remaining Data Provided at Once
+  • If the user's message contains all remaining missing fields:
+    - Do NOT perform the Acknowledgement Format that lists only the last-message fields.
+    - Instead, optionally give a very brief lead-in: "Thank you — I have the information you provided."
+    - Immediately present the **complete final formatted summary** (Phase 2 format) and nothing else.
+    - Ask for confirmation: "Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario."
 
 ---
-
-### **PHASE 2: Summary & Confirmation**
-
-* When all required details are collected:
-
-  1. Present the **full formatted summary** (first time showing all data together).
-  2. Ask:
-
-     > “Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario.”
+PHASE 2: Summary & Confirmation
+  • When all required details are collected (either sequentially or via the special-case):
+      1. Present the full formatted summary (this is the first time all data is shown together).
+      2. Ask: "Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario."
+  • The summary must reflect exactly the information supplied and use the "Required Information & Summary Format" labels and sections.
 
 ---
-
-### **PHASE 3: MSEL Generation & Intent Check**
-
-* **Clear Intent:** If user confirms (“Yes, that’s correct, please proceed”) or issues a direct command (“generate msel”), **call `generate_msel` immediately**.
-* **Ambiguous Reply:** If vague (“ok,” “sounds good”), clarify:
-
-  > “Just to be certain, are you confirming the details are correct and that I should proceed with generating the scenario?”
-* **If changes are requested:** Update → return to **Phase 2**.
+PHASE 3: MSEL Generation & Intent Check
+  • Clear Intent: If the user confirms ("Yes, that’s correct, please proceed") or issues a direct command ("generate msel"), call the generate_msel tool immediately. Direct commands imply confirmation.
+  • Ambiguous Reply: If the reply is vague ("ok," "sounds good"), clarify: "Just to be certain, are you confirming the details are correct and that I should proceed with generating the scenario?"
+  • If changes are requested: Update the data, re-present the full summary (Phase 2), and request confirmation again.
 
 ---
-
-### **PHASE 4: Final Output**
-
-* If `generate_msel` returns results, present them as:
-
-  > “Excellent. Based on the confirmed details, here is the Master Scenario Events List:”
-
-  * Then display full MSEL.
+PHASE 4: Final Output
+  • If generate_msel returns results, introduce them as:
+    "Excellent. Based on the confirmed details, here is the Master Scenario Events List:"
+    Then display the full MSEL.
 
 ---
+Required Information & Summary Format
 
-### **Required Information & Summary Format**
+Unit Details (primary)
+  • Unit Name
+  • Unit Type (e.g., "crude oil distillation unit, production module, jetty, tank farm, berth)
 
-**Core Asset Details**
+Core Asset Details
+  • Asset Name
+  • Asset Type (e.g., Refinery, Offshore Platform, Warehouse, Airport)
+  • Asset Location (Region and Country)
+  • Ownership/Operator Name
+  • Workforce Size and Shift Structure
 
-* Asset Name
-* Asset Type (e.g., Refinery, Offshore Platform, Warehouse, Airport)
-* Asset Location (Region and Country)
-* Ownership/Operator Name
-* Workforce Size and Shift Structure
+Operational Profile
+  • Primary Function of the Asset
+  • Key Processes/Operations Onsite
+  • Presence of Hazardous Materials (Yes/No + General Type)
 
-**Operational Profile**
+Emergency Setup
+  • Response Equipment Onsite (e.g., fire extinguishers, spill kits)
+  • Communication Systems Used (e.g., VHF radio, satellite phones)
 
-* Primary Function of the Asset
-* Key Processes/Operations Onsite
-* Presence of Hazardous Materials (Yes/No + General Type)
+Environmental and Risk Context
+  • Primary Risk Scenarios to Simulate (Select: fire, oil spill, medical emergency, security breach, natural disaster)
+  • Local Environmental Conditions (e.g., coastal, desert, industrial zone)
+  • Proximity to Sensitive or Populated Areas (Yes/No)
 
-**Emergency Setup**
-
-* Response Equipment Onsite (e.g., fire extinguishers, spill kits)
-* Communication Systems Used (e.g., VHF radio, satellite phones)
-
-**Environmental and Risk Context**
-
-* Primary Risk Scenarios to Simulate (Select: fire, oil spill, medical emergency, security breach, natural disaster)
-* Local Environmental Conditions (e.g., coastal, desert, industrial zone)
-* Proximity to Sensitive or Populated Areas (Yes/No)
-
-**Simulation Preferences**
-
-* Emergency Response Framework Used (e.g., ICS, MEMIR, Bronze-Silver-Gold)
-* Preferred Complexity Level (Basic / Intermediate / Complex)
-* Targeted Trainee Roles (e.g., Incident Commander, Planning Chief)
-* Controllers and Inject Roles Needed (e.g., Coast Guard, Regulator)
+Simulation Preferences
+  • Emergency Response Framework Used (e.g., ICS, MEMIR, Bronze-Silver-Gold)
+  • Preferred Complexity Level (Basic / Intermediate / Complex)
+  • Targeted Trainee Roles (e.g., Incident Commander, Planning Chief)
+  • Controllers and Inject Roles Needed (e.g., Coast Guard, Regulator)
 
 ---
+Key Enforcement Rules
+  • When the user supplies partial information: acknowledge only what was captured in the last message using the Acknowledgement Format (no mention of missing fields).
+  • When the user supplies all remaining fields in one message: skip the Acknowledgement Format and immediately present the complete final summary (Phase 2).
+  • Never reveal multiple missing items at once during normal collection.
+  • Always validate inputs before accepting them.
+  • Keep replies concise, professional, and user-focused.
 
-### **Key Enforcement Rules**
-
-* **Never** reveal multiple missing items at once.
-* **Never** show the full formatted list until **all data is collected**.
-* **Always** validate inputs before accepting them.
-
----
-
-**5. Persona:**
-Always maintain your helpful, expert ALERTSim AI persona.
+Persona:
+  • Maintain a helpful, expert ALERTSim AI persona: concise, professional, and conversational.
 """)
 
 # ──────────────────────── Redis helpers ────────────────────────
@@ -344,26 +324,89 @@ class ChatRequest(BaseModel):
 
 # ----- helper: format unit blob -----
 def format_unit_info(unit: dict) -> str:
-    asset = unit.get("unitInfo", {}).get("asset", {})
-    org   = asset.get("organisation", {})
-    teams = unit.get("teamsAssigned", [])
+    """
+    Format a unit blob for the agent. Extracts:
+      - unit name, unit type
+      - asset name, asset type, asset coordinates, asset country
+      - org name, org description, org hq location, org country
+      - teams assigned: team name and each user's role name
+    """
+    unit_info = unit.get("unitInfo", {}) or {}
+    asset = unit_info.get("asset") or unit.get("asset", {}) or {}
+    org = asset.get("organisation") or asset.get("organization") or {}
+    teams = unit.get("teamsAssigned", []) or unit.get("teams", []) or []
 
-    org_txt = (f"Organisation/Owner: '{org.get('name','Unknown')}' – "
-               f"{org.get('description','No description')}.\n"
-               f"HQ: {org.get('hqLocation','Unknown')}, {org.get('country','Unknown')}.")
-    asset_txt = (f"Asset: '{asset.get('name','Unknown')}', a "
-                 f"{asset.get('type','Unknown type')} asset in "
-                 f"{asset.get('country','Unknown')} (coords: {asset.get('coordinates','?')}).")
-    unit_txt  = f"Unit: '{unit.get('unitInfo',{}).get('name','Unknown')}'."
+    # Unit fields
+    unit_name = unit_info.get("name") or unit_info.get("unitName") or "Unknown"
+    unit_type = unit_info.get("type") or unit_info.get("unitType") or "Unknown type"
+
+    # Asset fields
+    asset_name = asset.get("name") or asset.get("assetName") or "Unknown"
+    asset_type = asset.get("type") or asset.get("assetType") or "Unknown type"
+    asset_coords = asset.get("coordinates") or asset.get("coords") or "?"
+    asset_country = asset.get("country") or asset.get("countryName") or "Unknown"
+
+    # Organisation fields
+    org_name = org.get("name") or "Unknown"
+    org_desc = org.get("description") or org.get("desc") or "No description"
+    org_hq = org.get("hqLocation") or org.get("hq") or org.get("headquarters") or "Unknown"
+    org_country = org.get("country") or asset_country or "Unknown"
+
+    # Build string parts (unit-first)
+    lines = []
+    # Unit Details (primary)
+    lines.append("Unit Details")
+    lines.append(f"  • Unit Name: {unit_name}")
+    lines.append(f"  • Unit Type: {unit_type}")
+
+    # Asset context
+    lines.append("")
+    lines.append("Asset Details")
+    lines.append(f"  • Asset Name: {asset_name}")
+    lines.append(f"  • Asset Type: {asset_type}")
+    lines.append(f"  • Asset Coordinates: {asset_coords}")
+    lines.append(f"  • Asset Country: {asset_country}")
+
+    # Organisation / Owner
+    lines.append("")
+    lines.append("Organisation / Owner")
+    lines.append(f"  • Name: {org_name}")
+    lines.append(f"  • Description: {org_desc}")
+    lines.append(f"  • HQ Location: {org_hq}")
+    lines.append(f"  • Country: {org_country}")
+
+    # Teams
+    lines.append("")
     if teams:
-        team_lines = []
+        lines.append("Teams Assigned")
         for t in teams:
-            users = [f"{u.get('firstName','')} {u.get('lastName','')}".strip() for u in t.get('users',[])]
-            team_lines.append(f"• Team: '{t.get('name','Unnamed')}' - {', '.join(users) or 'No users'}")
-        team_txt = "Teams Assigned:\n" + "\n".join(team_lines)
+            t_name = t.get("name") or t.get("teamName") or "Unnamed Team"
+            users_raw = t.get("users", []) or t.get("members", []) or []
+            if users_raw:
+                user_lines = []
+                for u in users_raw:
+                    # build user full name
+                    fname = u.get("firstName") or u.get("firstname") or ""
+                    lname = u.get("lastName") or u.get("lastname") or ""
+                    if not (fname or lname):
+                        # fallback single-field name
+                        fname = u.get("name") or u.get("fullName") or u.get("displayName") or "Unknown"
+                        lname = ""
+                    full_name = f"{fname} {lname}".strip()
+                    role = u.get("roleName") or u.get("role") or u.get("position") or "Unknown role"
+                    user_lines.append(f"{full_name} ({role})")
+                users_str = ", ".join(user_lines)
+            else:
+                users_str = "No users"
+            lines.append(f"  • Team: '{t_name}' - {users_str}")
     else:
-        team_txt = "No teams have been assigned."
-    return "\n".join([unit_txt, asset_txt, org_txt, team_txt, "Let's begin scenario setup."])
+        lines.append("Teams Assigned: No teams have been assigned.")
+
+    # Closing prompt
+    lines.append("")
+    lines.append("Let's begin scenario setup.")
+
+    return "\n".join(lines)
 
 # ----- regex helpers for confirmation -----
 CONFIRM_RE = re.compile(r"is all of this correct.*type ['\"]?ok['\"]?", re.I)
