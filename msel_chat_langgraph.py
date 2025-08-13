@@ -3,6 +3,7 @@ import json
 import logging
 import os, uuid
 import requests
+from pprint import pprint
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -32,11 +33,11 @@ ROLL_AFTER  = 50               # summarise every 50 human+AI pairs
 
 # ──────────────────────── Redis init ────────────────────────
 
-redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+# redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
 
 # ─────────────────────── ChatGPT model ───────────────────────
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
 
 # ──────────────────────── Tool definition ──────────────────────
 
@@ -50,6 +51,11 @@ async def msel_generator(scenario_data: str) -> str:
     msel_prompt = ChatPromptTemplate.from_messages([
         ("system",
          """You are ALERTSim AI, an expert scenario designer.
+
+First, generate a concise name and description for this MSEL exercise:
+- Name: A brief, descriptive title (max 50 chars)
+- Description: A 1-2 sentence summary of the scenario focus
+
 Using ONLY the user-confirmed asset and scenario information below, generate a detailed, stepwise Master Scenario Events List (MSEL) for emergency response training.
 Write in English. STRICTLY AVOID tables or markdown; output a clear, plain-text, numbered list of events.
 Each event must include:
@@ -66,6 +72,14 @@ Each event must include:
 
 Use realistic, escalation-aware, framework-aligned scenario progressions.
 Do NOT add fantastical or speculative details. If any details are missing, focus only on the provided scenario context.
+
+Return your response in this exact JSON format:
+{{
+  "name": "Exercise Name Here",
+  "description": "Brief description of the exercise scenario and objectives",
+  "msel_content": "Detailed numbered list of events..."
+}}
+
 User-verified details:
 
 """),
@@ -73,6 +87,7 @@ User-verified details:
     ])
     chain = msel_prompt | llm
     response = await chain.ainvoke({"scenario_data": scenario_data})
+    # print(f"Generated MSEL response: {response.content}")
     return response.content
 
 
@@ -81,7 +96,6 @@ llm_with_tools = llm.bind_tools(TOOLS, parallel_tool_calls=False)
 
 # ────────────────────── System prompt ──────────────────────────
 SYS = SystemMessage(content="""
-                    
                     ---
 
 You are ALERTSim AI, an expert in planning emergency management scenarios.
@@ -207,19 +221,6 @@ Persona:
 def rkey(sid: str) -> str:
     return f"chat:{sid}"
 
-# async def push(redis: aioredis.Redis, sid: str, msg: BaseMessage) -> None:
-#     await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
-
-# async def history_len(redis: aioredis.Redis, sid: str) -> int:
-#     return await redis.llen(rkey(sid))
-
-# async def history_dump(redis: aioredis.Redis, sid: str) -> List[Dict[str, Any]]:
-#     raw = await redis.lrange(rkey(sid), 0, -1)
-#     return [json.loads(j) for j in raw]
-
-# async def trim_old(redis: aioredis.Redis, sid: str, keep_last: int) -> None:
-#     await redis.ltrim(rkey(sid), keep_last, -1)
-
 async def rpush(redis, sid, msg):
     # Push message to Redis list
     await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
@@ -264,54 +265,6 @@ async def build_graph() -> tuple[StateGraph, AsyncRedisSaver]:
     sg.add_edge("tools", "assistant")
     return sg.compile(checkpointer=checkpointer), store_ctx
 
-# ───────────────────────── Chat loop ──────────────────────────
-
-# async def chat(sid: str) -> None:
-#     redis = aioredis.from_url(REDIS_URL, encoding="utf-8",
-#                               decode_responses=True)
-
-#     graph, ctx = await build_graph()
-#     tid = sid  # thread_id for LangGraph
-
-#     print(f"Session {sid} — type 'exit' to quit\n")
-
-#     try:
-#         # store system prompt once per session
-#         await push(redis, sid, SYS)
-
-#         while True:
-#             text = input("🧑‍💻 ").strip()
-#             if text.lower() in {"exit", "quit", "bye"}:
-#                 break
-
-#             human = HumanMessage(content=text)
-#             await push(redis, sid, human)
-
-#             state_in = {"messages": [human]}
-#             cfg = {"configurable": {"thread_id": tid}}
-
-#             async for chunk in graph.astream(state_in, cfg, stream_mode="values"):
-#                 final = chunk  # keep last chunk
-
-#             ai_msg: AIMessage = final["messages"][-1]
-#             print("🤖", ai_msg.content)
-#             await push(redis, sid, ai_msg)
-
-#             # summarise & roll window
-#             if await history_len(redis, sid) >= ROLL_AFTER * 2:
-#                 hist = await history_dump(redis, sid)
-#                 blob = "\n".join(m["content"] for m in hist)
-#                 summary = await llm.ainvoke(blob)
-#                 summ_msg = AIMessage(content="[SUMMARY]\n" + summary.content)
-#                 await push(redis, sid, summ_msg)
-#                 # keep newest entries (2×ROLL_AFTER + summary)
-#                 await trim_old(redis, sid, ROLL_AFTER * 2)
-#                 await push(redis, sid, SYS)
-
-#     finally:
-#         await ctx.__aexit__(None, None, None)
-#         await redis.close()
-
 # ────────────────────────── API ────────────────────────────────
 
 # ----- request/response models -----
@@ -321,6 +274,19 @@ class StartSession(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str
     input: str
+
+class ChatResponse(BaseModel):
+    session_id: str
+    response: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class StartSessionResponse(BaseModel):
+    session_id: str
+    response: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    error: Optional[str] = None
 
 # ----- helper: format unit blob -----
 def format_unit_info(unit: dict) -> str:
@@ -438,12 +404,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-
-
-@app.post("/start-session")
+@app.post("/start-session", response_model=StartSessionResponse)
 async def start_session(body: StartSession):
     sid = str(uuid.uuid4())
-    await set_summary(redis, sid, "")            # empty placeholder
+    await set_summary(app.state.redis, sid, "")            # empty placeholder
 
     # fetch unit info
     try:
@@ -459,8 +423,8 @@ async def start_session(body: StartSession):
     first_user_msg = format_unit_info(unit_json)
     # print(f"Session {sid} started with unit {body.unit_id}: \n{first_user_msg}")
     human = HumanMessage(content=first_user_msg)
-    await rpush(redis, sid, SYS)
-    await rpush(redis, sid, human)
+    await rpush(app.state.redis, sid, SYS)
+    await rpush(app.state.redis, sid, human)
 
     state_in = {"messages": [human]}
     cfg = {"configurable": {"thread_id": sid}}
@@ -468,42 +432,78 @@ async def start_session(body: StartSession):
         final = chunk
 
     ai_msg: AIMessage = final["messages"][-1]
-    await rpush(redis, sid, ai_msg)
+    await rpush(app.state.redis, sid, ai_msg)
 
-    return {"session_id": sid, "response": ai_msg.content}
+    # return {"session_id": sid, "response": ai_msg.content}
+    return StartSessionResponse(
+        session_id=sid,
+        response=ai_msg.content,
+        name=None,
+        description=None
+    )
 
-@app.post("/chat")
+@app.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest):
     human = HumanMessage(content=body.input)
-    await rpush(redis, body.session_id, human)
+    await rpush(app.state.redis, body.session_id, human)
 
     state_in = {"messages": [human]}
     cfg = {"configurable": {"thread_id": body.session_id}}
+    
+    # Collect all messages from the stream to inspect tool execution
+    all_messages = []
     async for chunk in app.state.graph.astream(state_in, cfg, stream_mode="values"):
+        all_messages.extend(chunk["messages"])
         final = chunk
+        
     ai_msg: AIMessage = final["messages"][-1]
-    await rpush(redis, body.session_id, ai_msg)
+    # await rpush(app.state.redis, body.session_id, ai_msg)
 
-    # store summary if present
-    if CONFIRM_RE.search(ai_msg.content):
-        summary = extract_summary(ai_msg.content)
-        if summary: await set_summary(redis, body.session_id, summary)
+    # Initialize response fields
+    response_data = {
+        # "session_id": body.session_id,
+        "content": ai_msg.content,
+        "name": None,
+        "description": None
+    }
 
-    # intercept \"ok\" to auto-run MSEL tool
-    if body.input.lower() == "ok":
-        summary = await get_summary(redis, body.session_id)
-        if summary:
-            # simulate user confirmation by calling the tool explicitly
-            msel_text = await msel_generator(summary)   # direct await
-            ai_msg = AIMessage(
-                content="Excellent. Based on the confirmed details, here is the Master Scenario Events List:\\n\\n" + msel_text
-            )
-            await rpush(redis, body.session_id, ai_msg)
-            return {"session_id": body.session_id, "response": ai_msg.content}
+    # Copy ALL fields from ai_msg to response_data except 'content'
+    ai_msg_dict = ai_msg.model_dump(exclude_none=True)
+    # pprint(ai_msg_dict)
+    for key, value in ai_msg_dict.items():
+        # print(key, value)
+        if key != "content":  # Skip content as we're using 'response'
+            response_data[key] = value
 
-    return {"session_id": body.session_id, "response": ai_msg.content}
+    # pprint(response_data)
 
+    # Look for MSEL tool execution in the message flow
+    msel_data = None
+    for msg in all_messages:
+        # Check for ToolMessage from msel_generator
+        if hasattr(msg, 'name') and msg.name == "msel_generator":
+            try:
+                import json
+                msel_data = json.loads(msg.content)
+                break
+            except json.JSONDecodeError:
+                print(f"Failed to parse tool response as JSON: {msg.content}")
+                continue
 
-# ────────────────────────── Run ────────────────────────────────
-# if __name__ == "__main__":
-#     asyncio.run(chat(str(uuid.uuid4())))
+    # If we found MSEL data, populate the response fields
+    if msel_data:
+        response_data["name"] = msel_data.get("name")
+        response_data["description"] = msel_data.get("description")
+        response_data["content"] = f"Excellent. Based on the confirmed details, here is the Master Scenario Events List:\n\n{msel_data.get('msel_content', '')}"
+
+    response_data = AIMessage(**response_data)
+
+    # print(response_data)
+    await rpush(app.state.redis, body.session_id, response_data)
+
+    return ChatResponse(
+                        session_id=body.session_id,
+                        response=response_data.content,
+                        name=response_data.name,
+                        description=response_data.description
+                        )
