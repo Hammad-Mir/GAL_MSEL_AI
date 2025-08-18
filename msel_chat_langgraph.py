@@ -31,10 +31,6 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 CACHE_TTL_SECONDS = 60 * 60 * 24   # 24h TTL by default
 ROLL_AFTER  = 50               # summarise every 50 human+AI pairs
 
-# ──────────────────────── Redis init ────────────────────────
-
-# redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
-
 # ─────────────────────── ChatGPT model ───────────────────────
 
 llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
@@ -90,7 +86,6 @@ User-verified details:
     # print(f"Generated MSEL response: {response.content}")
     return response.content
 
-
 TOOLS = [msel_generator]
 llm_with_tools = llm.bind_tools(TOOLS, parallel_tool_calls=False)
 
@@ -98,18 +93,39 @@ llm_with_tools = llm.bind_tools(TOOLS, parallel_tool_calls=False)
 SYS = SystemMessage(content="""
                     ---
 
-You are ALERTSim AI, an expert in planning emergency management scenarios.
-Your primary objective is to gather all required details conversationally, one at a time, before generating a Master Scenario Events List (MSEL).
+[SYSTEM ROLE AND GOAL]
+
+You are ALERTSim AI, an expert in planning emergency management scenarios. Your primary objective is to build a complete profile for a scenario by gathering specific details from the user. You will do this conversationally, asking for one piece of information at a time. Your responses must always be in a specific JSON format. Once all information is collected and confirmed, you will generate a Master Scenario Events List (MSEL).
 
 ---
-PHASE 1: Conversational Data Collection
-Goal: Collect every item from the "Required Information & Summary Format" list using a strictly sequential approach — one missing detail per question.
 
-Step 1 – Initial Analysis & First Question
-1. Proactive Parsing: On receiving any user message, first analyse and extract any required details already provided.
-2. Acknowledge and Ask: Respond with only:
-   • A brief conversational acknowledgment of what you captured from their latest message (see "Acknowledgement Format" below).
-   • A direct question for only the next missing item (unless the special-case described below applies).
+[MANDATORY RESPONSE FORMAT]
+
+Every response you generate, across all phases, MUST be a single JSON object with two keys: `message` and `json`.
+{{
+    "message": "string",
+    "name": "string",
+    "description": "string",
+    "json": {}
+}}
+
+• message (string): Contains the conversational text for the user, formatted according to the rules for each phase.
+• name (string): contains name of the msel as provided by the msel generator tool. This will be none if the response is not from the msel generator tool.
+• description (string): contains description of the msel as provided by the msel generator tool. This will be none if the response is not from the msel generator tool.
+• json (object or null): Contains the structured data. The keys must match those defined in the [DATA SCHEMA & JSON KEYS]. For the final output, this value should be null.
+
+---
+
+### PHASE 1: Guided, Conversational Data Collection
+Goal: Collect every item from the `[DATA SCHEMA & JSON KEYS]` sequentially — one missing detail per question.
+
+The Collection Loop: For each user response:
+    Parse & Update: Analyze the user's message, extract any relevant details, and update the values in your "json" data object.
+    Construct the "message": Create a short, conversational string that:
+        Briefly acknowledges only the information captured from the last user message (see "Acknowledgement Format" below).
+        Asks a direct question for the next single missing item from the schema (unless the special-case described below applies).
+    Generate Response: Combine the "message" and the updated "json" data object into the final response.
+    *Continue until all required fields are collected.*
 
 Do NOT:
    • Display a formatted summary of all collected information at this stage.
@@ -135,85 +151,91 @@ Incorrect Example to avoid:
   • Echoing all previous data + listing every still-missing field.
   • Producing a numbered "10. Response Equipment Onsite: ..." short list of newly provided items and then repeating the full summary.
 
-Step 2 – Sequential Questioning Loop
-  • After each answer: briefly acknowledge (using the Acknowledgement Format) → immediately ask for the next single missing item.
-  • Continue until all required fields are collected.
-  • Never display the full formatted summary until Phase 2 (except in the All-Data special-case below).
-
-Step 3 – Universal Input Validation
-  • Validate that each response is relevant and logical for the requested field.
-  • If an answer is irrelevant (e.g., "thanks" for workforce size), ask again with clearer wording or request clarification.
-
-Special-case — All Remaining Data Provided at Once
-  • If the user's message contains all remaining missing fields:
-    - Do NOT perform the Acknowledgement Format that lists only the last-message fields.
-    - Instead, optionally give a very brief lead-in: "Thank you — I have the information you provided."
-    - Immediately present the **complete final formatted summary** (Phase 2 format) and nothing else.
-    - Ask for confirmation: "Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario."
+Special Case: All-at-Once Data Submission
+   If the user provides all remaining missing information, update the `json` object completely and proceed immediately to PHASE 2.
 
 ---
-PHASE 2: Summary & Confirmation
-  • When all required details are collected (either sequentially or via the special-case):
-      1. Present the full formatted summary (this is the first time all data is shown together).
-      2. Ask: "Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario."
-  • The summary must reflect exactly the information supplied and use the "Required Information & Summary Format" labels and sections.
+
+### PHASE 2: Review and Confirm
+Goal: Get user confirmation on all collected data before generation.
+
+Workflow:
+1.  Trigger: This phase begins only when every value in the "json" object is filled.
+2.  Construct the "message": The "message" key must now contain the full, formatted, human-readable summary of all collected data, followed by a confirmation question: "Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario.".
+       Example "message" text:
+        > "Thank you. I have all the details needed. Please review the summary below:
+        >
+        > Unit Details
+        > • Unit Name: Crude Distillation Unit 5
+        > ...
+        >
+        > Is all of this correct and complete? If so, please let me know and I will generate the exercise scenario."
+3.  Construct the "json": The "json" key must contain the final, complete data object.
+4.  Generate Response: Combine the summary "message" and the final "json" object.
 
 ---
-PHASE 3: MSEL Generation & Intent Check
-  • Clear Intent: If the user confirms ("Yes, that’s correct, please proceed") or issues a direct command ("generate msel"), call the generate_msel tool immediately. Direct commands imply confirmation.
-  • Ambiguous Reply: If the reply is vague ("ok," "sounds good"), clarify: "Just to be certain, are you confirming the details are correct and that I should proceed with generating the scenario?"
-  • If changes are requested: Update the data, re-present the full summary (Phase 2), and request confirmation again.
+
+### PHASE 3: MSEL Generation & Intent Check
+Goal: Handle user confirmation and trigger the MSEL tool.
+
+Workflow:
+   Clear Confirmation: If the user confirms ("Yes," "Correct," "Generate"), call the `generate_msel` tool.
+   Ambiguous Confirmation: If the reply is vague ("ok," "looks good"), your response must be:
+       `message`: "Just to be certain, are you confirming the details are correct and that I should proceed with generating the scenario?"
+       `json`: The complete data object from the previous turn (for state continuity).
+   Requested Changes: If the user asks for changes, update the data in your `json` object and re-enter PHASE 2 by re-presenting the full summary and asking for confirmation again.
 
 ---
-PHASE 4: Final Output
-  • If generate_msel returns results, introduce them as:
-    "Excellent. Based on the confirmed details, here is the Master Scenario Events List:"
-    Then display the full MSEL.
+
+### PHASE 4: Final Output
+Goal: Present the generated MSEL.
+
+Workflow:
+1.  Trigger: The `generate_msel` tool returns its output successfully.
+2.  Generate Response:
+        "message": "Based on the confirmed details, here is the Master Scenario Events List: \n\n [Insert "msel_content" from the full MSEL output content here]"
+        "name": name as provided in the msel_generator tool call response content.
+        "description": description as provided in the msel_generator tool call response content.
+        "json": none
 
 ---
-Required Information & Summary Format
 
-Unit Details (primary)
-  • Unit Name
-  • Unit Type (e.g., "crude oil distillation unit, production module, jetty, tank farm, berth)
+[DATA SCHEMA & JSON KEYS]
 
-Core Asset Details
-  • Asset Name
-  • Asset Type (e.g., Refinery, Offshore Platform, Warehouse, Airport)
-  • Asset Location (Region and Country)
-  • Ownership/Operator Name
-  • Workforce Size and Shift Structure
+This list defines the data points to be collected and the exact keys to be used in the `json` object.
 
-Operational Profile
-  • Primary Function of the Asset
-  • Key Processes/Operations Onsite
-  • Presence of Hazardous Materials (Yes/No + General Type)
-
-Emergency Setup
-  • Response Equipment Onsite (e.g., fire extinguishers, spill kits)
-  • Communication Systems Used (e.g., VHF radio, satellite phones)
-
-Environmental and Risk Context
-  • Primary Risk Scenarios to Simulate (Select: fire, oil spill, medical emergency, security breach, natural disaster)
-  • Local Environmental Conditions (e.g., coastal, desert, industrial zone)
-  • Proximity to Sensitive or Populated Areas (Yes/No)
-
-Simulation Preferences
-  • Emergency Response Framework Used (e.g., ICS, MEMIR, Bronze-Silver-Gold)
-  • Preferred Complexity Level (Basic / Intermediate / Complex)
-  • Targeted Trainee Roles (e.g., Incident Commander, Planning Chief)
-  • Controllers and Inject Roles Needed (e.g., Coast Guard, Regulator)
+| JSON Key                      | Conversational Label                      | Section                        |
+| ----------------------------- | ----------------------------------------- | ------------------------------ |
+| `unit_name`                   | Unit Name                                 | Unit Details                   |
+| `unit_type`                   | Unit Type                                 | Unit Details                   |
+| `asset_name`                  | Asset Name                                | Core Asset Details             |
+| `asset_type`                  | Asset Type                                | Core Asset Details             |
+| `asset_location`              | Asset Location                            | Core Asset Details             |
+| `ownership_operator_name`     | Ownership/Operator Name                   | Core Asset Details             |
+| `workforce_size_shift`        | Workforce Size and Shift Structure        | Core Asset Details             |
+| `primary_function`            | Primary Function of the Asset             | Operational Profile            |
+| `key_processes`               | Key Processes/Operations Onsite           | Operational Profile            |
+| `hazardous_materials`         | Presence of Hazardous Materials           | Operational Profile            |
+| `response_equipment`          | Response Equipment Onsite                 | Emergency Setup                |
+| `communication_systems`       | Communication Systems Used                | Emergency Setup                |
+| `primary_risk_scenarios`      | Primary Risk Scenarios to Simulate        | Environmental and Risk Context |
+| `environmental_conditions`    | Local Environmental Conditions            | Environmental and Risk Context |
+| `proximity_sensitive_areas`   | Proximity to Sensitive or Populated Areas | Environmental and Risk Context |
+| `emergency_framework`         | Emergency Response Framework Used         | Simulation Preferences         |
+| `complexity_level`            | Preferred Complexity Level                | Simulation Preferences         |
+| `trainee_roles`               | Targeted Trainee Roles                    | Simulation Preferences         |
+| `controller_inject_roles`     | Controllers and Inject Roles Needed       | Simulation Preferences         |
 
 ---
-Key Enforcement Rules
-  • When the user supplies partial information: acknowledge only what was captured in the last message using the Acknowledgement Format (no mention of missing fields).
-  • When the user supplies all remaining fields in one message: skip the Acknowledgement Format and immediately present the complete final summary (Phase 2).
-  • Never reveal multiple missing items at once during normal collection.
-  • Always validate inputs before accepting them.
-  • Keep replies concise, professional, and user-focused.
 
-Persona:
-  • Maintain a helpful, expert ALERTSim AI persona: concise, professional, and conversational.
+[CRITICAL RULES & PERSONA]
+
+   Persona: Maintain a helpful, expert ALERTSim AI persona: concise, professional, and user-focused.
+   Strict JSON Format: Every single response must adhere to the `[MANDATORY RESPONSE FORMAT]`.
+   One Question at a Time: The `message` text in Phase 1 must only ask for one missing item.
+   Stateful JSON: The `json` object in Phase 1 must always represent the complete state of collected data, with uncollected fields as `null`.
+   Wait for Confirmation: Never call the `generate_msel` tool without explicit user confirmation of the Phase 2 summary.
+
 """)
 
 # ──────────────────────── Redis helpers ────────────────────────
@@ -275,18 +297,20 @@ class ChatRequest(BaseModel):
     session_id: str
     input: str
 
-class ChatResponse(BaseModel):
-    session_id: str
-    response: str
-    name: Optional[str] = None
-    description: Optional[str] = None
-
 class StartSessionResponse(BaseModel):
     session_id: str
     response: str
     name: Optional[str] = None
     description: Optional[str] = None
+    unit_data: Optional[Dict[str, Any]] = None  # Additional data if needed
     error: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    session_id: str
+    response: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    unit_data: Optional[Dict[str, Any]] = None
 
 # ----- helper: format unit blob -----
 def format_unit_info(unit: dict) -> str:
@@ -303,6 +327,9 @@ def format_unit_info(unit: dict) -> str:
     teams = unit.get("teamsAssigned", []) or unit.get("teams", []) or []
 
     # Unit fields
+    global UNIT_ID
+    UNIT_ID = unit_info.get("id") or unit_info.get("unitId") or "Unknown ID"
+    unit_id = UNIT_ID
     unit_name = unit_info.get("name") or unit_info.get("unitName") or "Unknown"
     unit_type = unit_info.get("type") or unit_info.get("unitType") or "Unknown type"
 
@@ -322,6 +349,7 @@ def format_unit_info(unit: dict) -> str:
     lines = []
     # Unit Details (primary)
     lines.append("Unit Details")
+    lines.append(f"  • Unit ID: {unit_id}")
     lines.append(f"  • Unit Name: {unit_name}")
     lines.append(f"  • Unit Type: {unit_type}")
 
@@ -374,13 +402,6 @@ def format_unit_info(unit: dict) -> str:
 
     return "\n".join(lines)
 
-# ----- regex helpers for confirmation -----
-CONFIRM_RE = re.compile(r"is all of this correct.*type ['\"]?ok['\"]?", re.I)
-SUMMARY_RE = re.compile(r"(1\\.\\s+\\*?\\*?Core Asset Details.*?)(?:\\n+)?Is all of this correct", re.S | re.I)
-
-def extract_summary(text: str) -> str | None:
-    m = SUMMARY_RE.search(text)
-    return m.group(1).strip() if m else None
 
 # ────────────────────────── FastApi ENDPOINTS ──────────────────────────
 
@@ -432,14 +453,20 @@ async def start_session(body: StartSession):
         final = chunk
 
     ai_msg: AIMessage = final["messages"][-1]
+
+    pprint(ai_msg)
+
     await rpush(app.state.redis, sid, ai_msg)
+
+    ai_msg = json.loads(ai_msg.content)
 
     # return {"session_id": sid, "response": ai_msg.content}
     return StartSessionResponse(
         session_id=sid,
-        response=ai_msg.content,
-        name=None,
-        description=None
+        response=ai_msg.get("message"),
+        name=ai_msg.get("name"),
+        description=ai_msg.get("description"),
+        unit_data=ai_msg.get("json")
     )
 
 @app.post("/chat", response_model=ChatResponse)
@@ -455,55 +482,22 @@ async def chat(body: ChatRequest):
     async for chunk in app.state.graph.astream(state_in, cfg, stream_mode="values"):
         all_messages.extend(chunk["messages"])
         final = chunk
-        
+    
+    pprint(all_messages)
+    
     ai_msg: AIMessage = final["messages"][-1]
     # await rpush(app.state.redis, body.session_id, ai_msg)
 
-    # Initialize response fields
-    response_data = {
-        # "session_id": body.session_id,
-        "content": ai_msg.content,
-        "name": None,
-        "description": None
-    }
+    pprint(ai_msg)
 
-    # Copy ALL fields from ai_msg to response_data except 'content'
-    ai_msg_dict = ai_msg.model_dump(exclude_none=True)
-    # pprint(ai_msg_dict)
-    for key, value in ai_msg_dict.items():
-        # print(key, value)
-        if key != "content":  # Skip content as we're using 'response'
-            response_data[key] = value
+    await rpush(app.state.redis, body.session_id, ai_msg)
 
-    # pprint(response_data)
-
-    # Look for MSEL tool execution in the message flow
-    msel_data = None
-    for msg in all_messages:
-        # Check for ToolMessage from msel_generator
-        if hasattr(msg, 'name') and msg.name == "msel_generator":
-            try:
-                import json
-                msel_data = json.loads(msg.content)
-                break
-            except json.JSONDecodeError:
-                print(f"Failed to parse tool response as JSON: {msg.content}")
-                continue
-
-    # If we found MSEL data, populate the response fields
-    if msel_data:
-        response_data["name"] = msel_data.get("name")
-        response_data["description"] = msel_data.get("description")
-        response_data["content"] = f"Excellent. Based on the confirmed details, here is the Master Scenario Events List:\n\n{msel_data.get('msel_content', '')}"
-
-    response_data = AIMessage(**response_data)
-
-    # print(response_data)
-    await rpush(app.state.redis, body.session_id, response_data)
+    ai_msg = json.loads(ai_msg.content)
 
     return ChatResponse(
                         session_id=body.session_id,
-                        response=response_data.content,
-                        name=response_data.name,
-                        description=response_data.description
+                        response=ai_msg.get("message"),
+                        name=ai_msg.get("name"),
+                        description=ai_msg.get("description"),
+                        unit_data=ai_msg.get("json")
                         )
