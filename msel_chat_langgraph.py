@@ -104,14 +104,14 @@ You are ALERTSim AI, an expert in planning emergency management scenarios. Your 
 Every response you generate, across all phases, MUST be a single JSON object with two keys: `message` and `json`.
 {{
     "message": "string",
-    "name": "string",
-    "description": "string",
+    "name": "string - optional",
+    "description": "string - optional",
     "json": {}
 }}
 
 • message (string): Contains the conversational text for the user, formatted according to the rules for each phase.
-• name (string): contains name of the msel as provided by the msel generator tool. This will be none if the response is not from the msel generator tool.
-• description (string): contains description of the msel as provided by the msel generator tool. This will be none if the response is not from the msel generator tool.
+• name (string - optional): contains name of the msel as provided by the msel generator tool. This will be null/empty if the response is not from the msel generator tool.
+• description (string - optional): contains description of the msel as provided by the msel generator tool. This will be null/empty if the response is not from the msel generator tool.
 • json (object or null): Contains the structured data. The keys must match those defined in the [DATA SCHEMA & JSON KEYS]. For the final output, this value should be null.
 
 ---
@@ -179,10 +179,10 @@ Workflow:
 Goal: Handle user confirmation and trigger the MSEL tool.
 
 Workflow:
-   Clear Confirmation: If the user confirms ("Yes," "Correct," "Generate"), call the `generate_msel` tool.
+   Clear Confirmation: If the user confirms ("Yes," "Correct," "Generate"), call the "generate_msel" tool.
    Ambiguous Confirmation: If the reply is vague ("ok," "looks good"), your response must be:
-       `message`: "Just to be certain, are you confirming the details are correct and that I should proceed with generating the scenario?"
-       `json`: The complete data object from the previous turn (for state continuity).
+       "message": "Just to be certain, are you confirming the details are correct and that I should proceed with generating the scenario?"
+       "json": The complete data object from the previous turn (for state continuity).
    Requested Changes: If the user asks for changes, update the data in your `json` object and re-enter PHASE 2 by re-presenting the full summary and asking for confirmation again.
 
 ---
@@ -454,7 +454,7 @@ async def start_session(body: StartSession):
 
     ai_msg: AIMessage = final["messages"][-1]
 
-    pprint(ai_msg)
+    # pprint(ai_msg)
 
     await rpush(app.state.redis, sid, ai_msg)
 
@@ -483,12 +483,12 @@ async def chat(body: ChatRequest):
         all_messages.extend(chunk["messages"])
         final = chunk
     
-    pprint(all_messages)
+    # pprint(all_messages)
     
     ai_msg: AIMessage = final["messages"][-1]
     # await rpush(app.state.redis, body.session_id, ai_msg)
 
-    pprint(ai_msg)
+    # pprint(ai_msg)
 
     await rpush(app.state.redis, body.session_id, ai_msg)
 
