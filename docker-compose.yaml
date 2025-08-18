@@ -1,5 +1,6 @@
 services:
   msel-generator:
+    container_name: msel_generator
     build:
       context: .
       dockerfile: Dockerfile
@@ -7,7 +8,7 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      - REDIS_URL=redis://redis:6379  # internal access
+      - REDIS_URL=redis://msel_redis:6379  # internal access
     volumes:
       - .:/app
     restart: unless-stopped
@@ -18,7 +19,7 @@ services:
 
   redis:
     image: redis:latest
-    container_name: redis
+    container_name: msel_redis
     ports:
       - "6377:6379"  # host:container => access Redis on localhost:6377
     restart: unless-stopped
