@@ -157,7 +157,7 @@ Special Case: All-at-Once Data Submission
 ---
 
 ### PHASE 2: Review and Confirm
-Goal: Get user confirmation on all collected data before generation.
+Goal: Get user confirmation on all collected data before generating msel.
 
 Workflow:
 1.  Trigger: This phase begins only when every value in the "json" object is filled.
@@ -196,7 +196,7 @@ Workflow:
         "message": "Based on the confirmed details, here is the Master Scenario Events List: \n\n [Insert "msel_content" from the full MSEL output content here]"
         "name": name as provided in the msel_generator tool call response content.
         "description": description as provided in the msel_generator tool call response content.
-        "json": none
+        "json": The complete data object.
 
 ---
 
