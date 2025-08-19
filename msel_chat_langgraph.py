@@ -402,6 +402,78 @@ def format_unit_info(unit: dict) -> str:
 
     return "\n".join(lines)
 
+def extract_required_data(data: dict) -> dict:
+    """
+    Extract required data from the input dictionary.
+    """
+    REQUIRED_FIELDS = {
+        "unit_name": None,
+        "unit_type": None,
+        "asset_name": None,
+        "asset_type": None,
+        "asset_location": None,
+        "ownership_operator_name": None,
+        "workforce_size_shift": None,
+        "primary_function": None,
+        "key_processes": None,
+        "hazardous_materials": None,
+        "response_equipment": None,
+        "communication_systems": None,
+        "environmental_conditions": None,
+        "proximity_sensitive_areas": None,
+        "trainee_roles": None,
+    }
+
+    collected = data.get("collectedUnitInfo", {})
+    # Check if *all* values are None
+    # all_null = all(v is None for v in collected.values())
+
+    if collected != None:
+        # Use collectedUnitInfo if available
+        REQUIRED_FIELDS.update({
+            "unit_name": collected.get("unitName"),
+            "unit_type": collected.get("unitType"),
+            "asset_name": collected.get("assetName"),
+            "asset_type": collected.get("assetType"),
+            "asset_location": collected.get("assetLocation"),
+            "ownership_operator_name": collected.get("ownershipOperatorName"),
+            "workforce_size_shift": collected.get("workforceSizeShift"),
+            "primary_function": collected.get("primaryFunction"),
+            "key_processes": collected.get("keyProcesses"),
+            "hazardous_materials": collected.get("hazardousMaterials"),
+            "response_equipment": collected.get("responseEquipment"),
+            "communication_systems": collected.get("communicationSystems"),
+            "environmental_conditions": collected.get("environmentalConditions"),
+            "proximity_sensitive_areas": collected.get("proximitySensitiveAreas"),
+        })
+    else:
+        # Fallback to unitInfo
+        unit_info = data.get("unitInfo", {})
+        asset = unit_info.get("asset", {})
+        org = asset.get("organisation", {})
+
+        REQUIRED_FIELDS.update({
+            "unit_name": unit_info.get("name"),
+            "unit_type": unit_info.get("type"),
+            "asset_name": asset.get("name"),
+            "asset_type": asset.get("type"),
+            "asset_location": asset.get("country"),
+            "ownership_operator_name": org.get("name"),
+        })
+
+    # Extract trainee roles from teamsAssigned
+    teams = data.get("teamsAssigned", [])
+    trainee_roles = []
+    for team in teams:
+        for user in team.get("users", []):
+            role = user.get("roleName")
+            if role:
+                trainee_roles.append(role)
+
+    REQUIRED_FIELDS["trainee_roles"] = ", ".join(trainee_roles) if trainee_roles else None
+
+    # Return as JSON string
+    return json.dumps(REQUIRED_FIELDS, indent=2)
 
 # ────────────────────────── FastApi ENDPOINTS ──────────────────────────
 
@@ -441,8 +513,10 @@ async def start_session(body: StartSession):
                 "error": str(e)}
 
     # feed first turn
-    first_user_msg = format_unit_info(unit_json)
-    # print(f"Session {sid} started with unit {body.unit_id}: \n{first_user_msg}")
+    # first_user_msg = format_unit_info(unit_json)
+    first_user_msg = extract_required_data(unit_json)
+    print(f"First user message: \n{first_user_msg}")
+
     human = HumanMessage(content=first_user_msg)
     await rpush(app.state.redis, sid, SYS)
     await rpush(app.state.redis, sid, human)
