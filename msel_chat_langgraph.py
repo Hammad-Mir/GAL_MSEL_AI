@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph import StateGraph, MessagesState, START
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
 
@@ -27,7 +28,7 @@ load_dotenv()                                 # read .env if present
 # UNIT_API_BASE = "http://192.168.1.29:3001/api/ai-scenario-generation/hierarchy/unit"
 UNIT_API_BASE =  os.getenv("UNIT_API_BASE")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
-# PG_DSN = os.getenv("PG_DSN",    "postgresql://postgres:mypassword@localhost:5432/mydb")
+PG_DSN = os.getenv("PG_DSN",    "postgresql://postgres:mypassword@localhost:5432/mydb")
 CACHE_TTL_SECONDS = 60 * 60 * 24   # 24h TTL by default
 ROLL_AFTER  = 50               # summarise every 50 human+AI pairs
 
@@ -111,7 +112,7 @@ Every response you generate, across all phases, MUST be a single JSON object wit
 
 • message (string): Contains the conversational text for the user, formatted according to the rules for each phase.
 • name (string - optional): contains name of the msel as provided by the msel generator tool. This will be null/empty if the response is not from the msel generator tool.
-• description (string - optional): contains description of the msel as provided by the msel generator tool. This will be null/empty if the response is not from the msel generator tool.
+• description (string - optional): contains description of the msel as provided in the msel generator tool call response content. This will be null/empty if the response is not from the msel generator tool.
 • json (object or null): Contains the structured data. The keys must match those defined in the [DATA SCHEMA & JSON KEYS]. For the final output, this value should be null.
 
 ---
@@ -240,31 +241,31 @@ This list defines the data points to be collected and the exact keys to be used 
 
 # ──────────────────────── Redis helpers ────────────────────────
 
-def rkey(sid: str) -> str:
-    return f"chat:{sid}"
+# def rkey(sid: str) -> str:
+#     return f"chat:{sid}"
 
-async def rpush(redis, sid, msg):
-    # Push message to Redis list
-    await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
-    # Set/update TTL for the session key
-    await redis.expire(rkey(sid), CACHE_TTL_SECONDS)
+# async def rpush(redis, sid, msg):
+#     # Push message to Redis list
+#     await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
+#     # Set/update TTL for the session key
+#     await redis.expire(rkey(sid), CACHE_TTL_SECONDS)
 
-async def rlen(redis, sid):
-    return await redis.llen(rkey(sid))
+# async def rlen(redis, sid):
+#     return await redis.llen(rkey(sid))
 
-async def rget_all(redis, sid):
-    raw = await redis.lrange(rkey(sid), 0, -1)
-    return [json.loads(j) for j in raw]
+# async def rget_all(redis, sid):
+#     raw = await redis.lrange(rkey(sid), 0, -1)
+#     return [json.loads(j) for j in raw]
 
-async def rtrim(redis, sid, keep):
-    await redis.ltrim(rkey(sid), keep, -1)
+# async def rtrim(redis, sid, keep):
+#     await redis.ltrim(rkey(sid), keep, -1)
 
-# Store the confirmed summary in Redis so any worker can fetch it
-async def set_summary(redis, sid, txt):
-    await redis.setex(f"summary:{sid}", CACHE_TTL_SECONDS, txt)
+# # Store the confirmed summary in Redis so any worker can fetch it
+# async def set_summary(redis, sid, txt):
+#     await redis.setex(f"summary:{sid}", CACHE_TTL_SECONDS, txt)
 
-async def get_summary(redis, sid):
-    return await redis.get(f"summary:{sid}")
+# async def get_summary(redis, sid):
+#     return await redis.get(f"summary:{sid}")
 
 # ──────────────────────── LangGraph ───────────────────────────
 
@@ -274,10 +275,11 @@ async def assistant(state: MessagesState) -> Dict[str, List[BaseMessage]]:
     return {"messages": [reply]}
 
 
-async def build_graph() -> tuple[StateGraph, AsyncRedisSaver]:
-    store_ctx = AsyncRedisSaver.from_conn_string(
-        REDIS_URL, ttl={"default_ttl": CACHE_TTL_SECONDS})
-    checkpointer = await store_ctx.__aenter__()
+async def build_graph(checkpointer) -> StateGraph:
+
+    # async with AsyncPostgresSaver.from_conn_string(PG_DSN) as checkpointer:
+
+    #     await checkpointer.setup()
 
     sg = StateGraph(MessagesState)
     sg.add_node("assistant", assistant)
@@ -285,7 +287,7 @@ async def build_graph() -> tuple[StateGraph, AsyncRedisSaver]:
     sg.add_edge(START, "assistant")
     sg.add_conditional_edges("assistant", tools_condition)
     sg.add_edge("tools", "assistant")
-    return sg.compile(checkpointer=checkpointer), store_ctx
+    return sg.compile(checkpointer=checkpointer)
 
 # ────────────────────────── API ────────────────────────────────
 
@@ -483,24 +485,28 @@ async def lifespan(app: FastAPI):
     Runs once at startup and once at graceful shutdown.
     """
     # ---------- STARTUP ----------
-    app.state.redis = aioredis.from_url(
-        REDIS_URL, encoding="utf-8", decode_responses=True
-    )
-    app.state.graph, app.state.saver_ctx = await build_graph()
+    # app.state.redis = aioredis.from_url(
+    #     REDIS_URL, encoding="utf-8", decode_responses=True
+    # )
 
-    logging.info("🚀 ALERTSim service started")
-    yield                                       # ← application runs here
-    # ---------- SHUTDOWN ----------
-    await app.state.saver_ctx.__aexit__(None, None, None)
-    await app.state.redis.close()
-    logging.info("🛑 ALERTSim service stopped")
+    async with AsyncPostgresSaver.from_conn_string(PG_DSN) as app.state.checkpointer:
+
+        await app.state.checkpointer.setup()
+
+        app.state.graph = await build_graph(app.state.checkpointer)
+
+        logging.info("🚀 ALERTSim service started")
+        yield                                       # ← application runs here
+        # ---------- SHUTDOWN ----------
+        # await app.state.redis.close()
+        logging.info("🛑 ALERTSim service stopped")
 
 app = FastAPI(lifespan=lifespan)
 
 @app.post("/start-session", response_model=StartSessionResponse)
 async def start_session(body: StartSession):
     sid = str(uuid.uuid4())
-    await set_summary(app.state.redis, sid, "")            # empty placeholder
+    # await set_summary(app.state.redis, sid, "")            # empty placeholder
 
     # fetch unit info
     try:
@@ -518,8 +524,8 @@ async def start_session(body: StartSession):
     print(f"First user message: \n{first_user_msg}")
 
     human = HumanMessage(content=first_user_msg)
-    await rpush(app.state.redis, sid, SYS)
-    await rpush(app.state.redis, sid, human)
+    # await rpush(app.state.redis, sid, SYS)
+    # await rpush(app.state.redis, sid, human)
 
     state_in = {"messages": [human]}
     cfg = {"configurable": {"thread_id": sid}}
@@ -530,7 +536,7 @@ async def start_session(body: StartSession):
 
     # pprint(ai_msg)
 
-    await rpush(app.state.redis, sid, ai_msg)
+    # await rpush(app.state.redis, sid, ai_msg)
 
     ai_msg = json.loads(ai_msg.content)
 
@@ -546,7 +552,7 @@ async def start_session(body: StartSession):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest):
     human = HumanMessage(content=body.input)
-    await rpush(app.state.redis, body.session_id, human)
+    # await rpush(app.state.redis, body.session_id, human)
 
     state_in = {"messages": [human]}
     cfg = {"configurable": {"thread_id": body.session_id}}
@@ -564,7 +570,7 @@ async def chat(body: ChatRequest):
 
     # pprint(ai_msg)
 
-    await rpush(app.state.redis, body.session_id, ai_msg)
+    # await rpush(app.state.redis, body.session_id, ai_msg)
 
     ai_msg = json.loads(ai_msg.content)
 
