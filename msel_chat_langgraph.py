@@ -461,16 +461,46 @@ def extract_required_data(data: dict) -> dict:
             "ownership_operator_name": org.get("name"),
         })
 
-    # Extract trainee roles from teamsAssigned
+    # # Extract trainee roles from teamsAssigned
+    # teams = data.get("teamsAssigned", [])
+    # trainee_roles = []
+    # for team in teams:
+    #     for user in team.get("users", []):
+    #         role = user.get("roleName")
+    #         if role:
+    #             trainee_roles.append(role)
+
+    # REQUIRED_FIELDS["trainee_roles"] = ", ".join(trainee_roles) if trainee_roles else None
+
+    # Extract trainee roles with flexible access control
     teams = data.get("teamsAssigned", [])
     trainee_roles = []
+
     for team in teams:
         for user in team.get("users", []):
             role = user.get("roleName")
-            if role:
-                trainee_roles.append(role)
+            access = user.get("accessControl", {})
 
-    REQUIRED_FIELDS["trainee_roles"] = ", ".join(trainee_roles) if trainee_roles else None
+            if role:
+                # Start with a shallow copy of accessControl so we don’t lose new keys
+                access_info = dict(access)
+
+                # Normalise the `board` if it exists
+                if "board" in access:
+                    access_info["board"] = {
+                        "access": access["board"].get("access"),
+                        "title": access["board"].get("data", {}).get("title"),
+                        "description": access["board"].get("data", {}).get("description")
+                    }
+
+                role_info = {
+                    "role": role,
+                    "accessControl": access_info
+                }
+                trainee_roles.append(role_info)
+
+    REQUIRED_FIELDS["trainee_roles"] = trainee_roles if trainee_roles else None
+
 
     # Return as JSON string
     return json.dumps(REQUIRED_FIELDS, indent=2)
@@ -515,7 +545,7 @@ async def start_session(body: StartSession):
     # feed first turn
     # first_user_msg = format_unit_info(unit_json)
     first_user_msg = extract_required_data(unit_json)
-    print(f"First user message: \n{first_user_msg}")
+    # print(f"First user message: \n{first_user_msg}")
 
     human = HumanMessage(content=first_user_msg)
     # await rpush(app.state.redis, sid, SYS)
