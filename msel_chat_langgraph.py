@@ -240,31 +240,31 @@ This list defines the data points to be collected and the exact keys to be used 
 
 # ──────────────────────── Redis helpers ────────────────────────
 
-# def rkey(sid: str) -> str:
-#     return f"chat:{sid}"
+def rkey(sid: str) -> str:
+    return f"chat:{sid}"
 
-# async def rpush(redis, sid, msg):
-#     # Push message to Redis list
-#     await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
-#     # Set/update TTL for the session key
-#     await redis.expire(rkey(sid), CACHE_TTL_SECONDS)
+async def rpush(redis, sid, msg):
+    # Push message to Redis list
+    await redis.rpush(rkey(sid), json.dumps(msg.model_dump()))
+    # Set/update TTL for the session key
+    await redis.expire(rkey(sid), CACHE_TTL_SECONDS)
 
-# async def rlen(redis, sid):
-#     return await redis.llen(rkey(sid))
+async def rlen(redis, sid):
+    return await redis.llen(rkey(sid))
 
-# async def rget_all(redis, sid):
-#     raw = await redis.lrange(rkey(sid), 0, -1)
-#     return [json.loads(j) for j in raw]
+async def rget_all(redis, sid):
+    raw = await redis.lrange(rkey(sid), 0, -1)
+    return [json.loads(j) for j in raw]
 
-# async def rtrim(redis, sid, keep):
-#     await redis.ltrim(rkey(sid), keep, -1)
+async def rtrim(redis, sid, keep):
+    await redis.ltrim(rkey(sid), keep, -1)
 
-# # Store the confirmed summary in Redis so any worker can fetch it
-# async def set_summary(redis, sid, txt):
-#     await redis.setex(f"summary:{sid}", CACHE_TTL_SECONDS, txt)
+# Store the confirmed summary in Redis so any worker can fetch it
+async def set_summary(redis, sid, txt):
+    await redis.setex(f"summary:{sid}", CACHE_TTL_SECONDS, txt)
 
-# async def get_summary(redis, sid):
-#     return await redis.get(f"summary:{sid}")
+async def get_summary(redis, sid):
+    return await redis.get(f"summary:{sid}")
 
 # ──────────────────────── LangGraph ───────────────────────────
 
@@ -276,7 +276,7 @@ async def assistant(state: MessagesState) -> Dict[str, List[BaseMessage]]:
 
 async def build_graph() -> tuple[StateGraph, AsyncRedisSaver]:
     store_ctx = AsyncRedisSaver.from_conn_string(
-        REDIS_URL)
+        REDIS_URL, ttl={"default_ttl": CACHE_TTL_SECONDS})
     checkpointer = await store_ctx.__aenter__()
 
     sg = StateGraph(MessagesState)
@@ -513,9 +513,9 @@ async def lifespan(app: FastAPI):
     Runs once at startup and once at graceful shutdown.
     """
     # ---------- STARTUP ----------
-    # app.state.redis = aioredis.from_url(
-    #     REDIS_URL, encoding="utf-8", decode_responses=True
-    # )
+    app.state.redis = aioredis.from_url(
+        REDIS_URL, encoding="utf-8", decode_responses=True
+    )
     app.state.graph, app.state.saver_ctx = await build_graph()
 
     logging.info("🚀 ALERTSim service started")
@@ -530,7 +530,7 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/start-session", response_model=StartSessionResponse)
 async def start_session(body: StartSession):
     sid = str(uuid.uuid4())
-    # await set_summary(app.state.redis, sid, "")            # empty placeholder
+    await set_summary(app.state.redis, sid, "")            # empty placeholder
 
     # fetch unit info
     try:
@@ -548,8 +548,8 @@ async def start_session(body: StartSession):
     # print(f"First user message: \n{first_user_msg}")
 
     human = HumanMessage(content=first_user_msg)
-    # await rpush(app.state.redis, sid, SYS)
-    # await rpush(app.state.redis, sid, human)
+    await rpush(app.state.redis, sid, SYS)
+    await rpush(app.state.redis, sid, human)
 
     state_in = {"messages": [human]}
     cfg = {"configurable": {"thread_id": sid}}
@@ -560,7 +560,7 @@ async def start_session(body: StartSession):
 
     # pprint(ai_msg)
 
-    # await rpush(app.state.redis, sid, ai_msg)
+    await rpush(app.state.redis, sid, ai_msg)
 
     ai_msg = json.loads(ai_msg.content)
 
@@ -576,7 +576,7 @@ async def start_session(body: StartSession):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest):
     human = HumanMessage(content=body.input)
-    # await rpush(app.state.redis, body.session_id, human)
+    await rpush(app.state.redis, body.session_id, human)
 
     state_in = {"messages": [human]}
     cfg = {"configurable": {"thread_id": body.session_id}}
@@ -594,7 +594,7 @@ async def chat(body: ChatRequest):
 
     # pprint(ai_msg)
 
-    # await rpush(app.state.redis, body.session_id, ai_msg)
+    await rpush(app.state.redis, body.session_id, ai_msg)
 
     ai_msg = json.loads(ai_msg.content)
 
