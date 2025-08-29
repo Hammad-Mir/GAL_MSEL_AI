@@ -22,9 +22,17 @@ services:
     container_name: msel_redis
     ports:
       - "6377:6379"  # host:container => access Redis on localhost:6377
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf  # mount custom config
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     restart: unless-stopped
     networks:
       - app_network
+
+volumes:
+  redis_data:
+    driver: local
 
 networks:
   app_network:
