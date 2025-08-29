@@ -137,6 +137,7 @@ Acknowledgement Format (when the user did NOT provide all required fields)
    • Under that header, present **only** the fields you extracted from the user’s latest message, using the same labels and structure as in the "Required Information & Summary Format" (sections and bullet labels).
    • Do **not** list or call out missing fields; do not show a numbered "new fields" list.
    • Keep this acknowledgement concise (3–8 lines ideally), factual, and matching the summary labels.
+   • For trainee roles captured, make sure to return the names of the roles along with their associated communication tools and control panels.
 
 Correct Example (partial input):
   User provides Asset Name and Asset Location.
@@ -234,6 +235,7 @@ This list defines the data points to be collected and the exact keys to be used 
    Strict JSON Format: Every single response must adhere to the `[MANDATORY RESPONSE FORMAT]`.
    One Question at a Time: The `message` text in Phase 1 must only ask for one missing item.
    Stateful JSON: The `json` object in Phase 1 must always represent the complete state of collected data, with uncollected fields as `null`.
+   trainee roles also includes the communication tools and control panels they have access to and should be recorded as a nested object within a trainee role.
    Wait for Confirmation: Never call the `generate_msel` tool without explicit user confirmation of the Phase 2 summary.
 
 """)
