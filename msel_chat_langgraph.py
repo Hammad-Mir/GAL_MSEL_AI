@@ -487,13 +487,15 @@ def extract_required_data(data: dict) -> dict:
                 # Start with a shallow copy of accessControl so we don’t lose new keys
                 access_info = dict(access)
 
-                # Normalise the `board` if it exists
-                if "board" in access:
+                # Normalise the `board` if it exists and is a dict
+                if "board" in access and isinstance(access["board"], dict):
                     access_info["board"] = {
                         "access": access["board"].get("access"),
                         "title": access["board"].get("data", {}).get("title"),
                         "description": access["board"].get("data", {}).get("description")
                     }
+                elif "board" in access:
+                    access_info["board"] = None  # board is explicitly null
 
                 role_info = {
                     "role": role,
